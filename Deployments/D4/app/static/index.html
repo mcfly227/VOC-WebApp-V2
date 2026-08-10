@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Air Emissions Tracker — PTI 183-15</title>
+<style>
+  :root{
+    --ink:#16191c; --paper:#eef0ee; --card:#ffffff; --line:#d4d8d4;
+    --steel:#5a6472; --accent:#2456c8; --ok:#2e7d4f; --warn:#b26a00; --over:#b3261e;
+    --basecoat:#2456c8; --hardener:#b26a00; --clearcoat:#5a8d8d; --solvent:#7a4fb0; --primer:#6b7d6b;
+    --mono:ui-monospace,'Cascadia Mono','Segoe UI Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+  header{background:var(--ink);color:#fff;padding:14px 24px;display:flex;align-items:baseline;gap:14px}
+  header h1{font-size:17px;font-weight:600;letter-spacing:.2px}
+  header .permit{font-family:var(--mono);font-size:12px;color:#9fb0c8;border:1px solid #3a4148;border-radius:3px;padding:2px 8px}
+  nav{display:flex;gap:2px;background:var(--ink);padding:0 24px}
+  nav button{background:none;border:none;color:#aab4bd;padding:10px 16px;font-size:13.5px;cursor:pointer;border-bottom:2px solid transparent}
+  nav button.on{color:#fff;border-bottom-color:var(--accent)}
+  main{max-width:1200px;margin:22px auto;padding:0 24px}
+  .grid{display:grid;grid-template-columns:390px 1fr;gap:20px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--steel);margin-bottom:14px}
+  label{display:block;font-size:12px;color:var(--steel);margin:10px 0 3px}
+  input,select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:4px;font-size:14px;font-family:inherit;background:#fff}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  button.primary{background:var(--accent);color:#fff;border:none;border-radius:4px;padding:9px 18px;font-size:14px;cursor:pointer;margin-top:14px}
+  button.primary:hover{background:#1c46a6}
+  button.ghost{background:none;border:1px solid var(--line);border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12.5px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+  .chip::before{content:'';width:11px;height:11px;border-radius:2px;background:var(--c,#888);display:inline-block}
+  .chip.Basecoat{--c:var(--basecoat)} .chip.Hardener{--c:var(--hardener)}
+  .chip.Clearcoat{--c:var(--clearcoat)} .chip.Solvent{--c:var(--solvent)} .chip.Primer{--c:var(--primer)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--steel);padding:6px 8px;border-bottom:2px solid var(--line)}
+  td{padding:7px 8px;border-bottom:1px solid var(--line)}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-size:12.5px}
+  tr.voided td{color:#a9a9a9;text-decoration:line-through}
+  .gauge{margin-bottom:13px}
+  .gauge .lbl{display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px}
+  .gauge .lbl b{font-family:var(--mono);font-weight:500}
+  .gauge .bar{height:10px;background:#e2e5e2;border-radius:2px;overflow:hidden}
+  .gauge .fill{height:100%;background:var(--ok)}
+  .gauge.warn .fill{background:var(--warn)} .gauge.over .fill{background:var(--over)}
+  .muted{color:var(--steel);font-size:12px}
+  .toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:#fff;padding:11px 18px;border-radius:5px;font-size:13.5px;opacity:0;transition:opacity .25s}
+  .toast.show{opacity:1}
+  .flex{display:flex;gap:10px;align-items:center}
+  .spacer{flex:1}
+  dialog{border:1px solid var(--line);border-radius:6px;padding:20px;max-width:560px;width:90%}
+  dialog::backdrop{background:rgba(20,25,28,.45)}
+  .gal-preview{font-family:var(--mono);font-size:13px;color:var(--accent);margin-top:6px}
+  #chemDlg{max-width:680px}
+  #chemDlg h2{font-size:15px;margin-bottom:2px}
+  #chemDlg .sub{font-size:12.5px;color:var(--steel);margin-bottom:12px}
+  #chemDlg table{margin-top:4px}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.4px;padding:2px 7px;border-radius:10px}
+  .tag.hap{background:#fbe9e7;color:var(--over)}
+  .tag.solid{background:#e8eaf6;color:#3949ab}
+  .chemtotals{display:flex;gap:22px;margin-top:12px;padding-top:10px;border-top:2px solid var(--line);font-size:12.5px;color:var(--steel)}
+  .chemtotals b{font-family:var(--mono);color:var(--ink);font-weight:600;display:block;font-size:14px}
+  #prodDlg{max-width:760px;max-height:92vh;overflow-y:auto}
+  #prodDlg h2{font-size:15px;margin-bottom:12px}
+  #prodDlg h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--steel);margin:18px 0 6px;border-top:1px solid var(--line);padding-top:12px}
+  .row4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+  .chemrow{display:grid;grid-template-columns:2fr 1.2fr .8fr auto auto auto;gap:8px;align-items:center;margin-bottom:6px}
+  .chemrow input[type=checkbox]{width:auto}
+  .chemrow .cklbl{font-size:11.5px;color:var(--steel);display:flex;align-items:center;gap:4px;white-space:nowrap}
+  .delchem{background:none;border:none;color:var(--over);cursor:pointer;font-size:16px;padding:0 4px}
+  .hint{font-size:11.5px;color:var(--steel);margin-top:3px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Air Emissions Tracker</h1>
+  <span class="permit">MI-EGLE PTI 183-15</span>
+  <span class="spacer"></span>
+  <span class="muted" id="who"></span>
+</header>
+<nav>
+  <button class="on" data-tab="log">Log usage</button>
+  <button data-tab="month">Month review</button>
+  <button data-tab="products">Products</button>
+  <button data-tab="reports">Reports</button>
+</nav>
+<main>
+
+<section id="tab-log" class="grid">
+  <div class="card">
+    <h2>Log material use</h2>
+    <form id="logForm">
+      <div class="row2">
+        <div><label>Date</label><input type="date" name="use_date" required></div>
+        <div><label>Coating line</label><select name="emission_unit" id="euSel"></select></div>
+      </div>
+      <label>Product</label>
+      <select name="product_number" id="prodSel"></select>
+      <div class="row2">
+        <div><label>Quantity</label><input type="number" step="any" min="0.001" name="quantity" required></div>
+        <div><label>Unit</label><select name="unit"><option value="lbs">pounds (scale)</option><option value="gal">gallons</option></select></div>
+      </div>
+      <div class="gal-preview" id="galPreview"></div>
+      <div class="row3">
+        <div><label>Part type</label><select name="part_type" id="ptSel"></select></div>
+        <div><label>Shift</label><select name="shift"><option>Shift 1</option><option>Shift 2</option><option>Shift 3</option></select></div>
+        <div><label>Shift hours</label><input type="number" step="0.25" name="shift_hours" value="8.5"></div>
+      </div>
+      <label>Notes</label><input name="notes" placeholder="optional">
+      <button class="primary" type="submit">Save entry</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2>Rolling 12-month position vs permit limits</h2>
+    <div id="gauges"></div>
+    <p class="muted" id="gaugeNote"></p>
+  </div>
+</section>
+
+<section id="tab-month" style="display:none">
+  <div class="card">
+    <div class="flex">
+      <h2 style="margin:0">Usage log</h2>
+      <span class="spacer"></span>
+      <input type="month" id="monthPick" style="width:170px">
+      <label class="flex" style="margin:0;font-size:12.5px;color:var(--steel)">
+        <input type="checkbox" id="showVoided" style="width:auto"> show voided</label>
+    </div>
+    <table id="usageTable" style="margin-top:12px">
+      <thead><tr><th>Date</th><th>Line</th><th>Product</th><th>Type</th><th>Part type</th>
+        <th class="num">Entered</th><th class="num">Gallons</th><th>Shift</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-products" style="display:none">
+  <div class="card">
+    <div class="flex"><h2 style="margin:0">Product library (EDS data)</h2><span class="spacer"></span>
+      <button class="ghost" id="newProd">Add product</button></div>
+    <table id="prodTable" style="margin-top:12px">
+      <thead><tr><th>Number</th><th>Name</th><th>Category</th><th class="num">Density</th>
+        <th class="num">VOC lb/gal</th><th class="num">HAP lb/gal</th><th class="num">Chems</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-reports" style="display:none">
+  <div class="card" style="max-width:560px">
+    <h2>Aggregate Emissions Report</h2>
+    <p class="muted">Generates the full 8-tab workbook (emissions, material use, isobutyl acetate daily,
+      daily use per line, material content, as-applied VOC) with history from Jan 2019 and the selected
+      month computed from logged usage.</p>
+    <label>Report month</label>
+    <input type="month" id="repMonth" style="width:190px">
+    <br><button class="primary" id="genRep">Generate workbook</button>
+  </div>
+</section>
+
+</main>
+
+<dialog id="voidDlg">
+  <h2 style="font-size:15px;margin-bottom:10px">Void entry</h2>
+  <p class="muted">The entry stays in the record with your name and reason — nothing is deleted.</p>
+  <label>Reason</label><input id="voidReason">
+  <div class="flex" style="margin-top:14px"><span class="spacer"></span>
+    <button class="ghost" onclick="voidDlg.close()">Cancel</button>
+    <button class="primary" style="margin:0" id="voidGo">Void entry</button></div>
+</dialog>
+
+<dialog id="chemDlg">
+  <h2 id="chemTitle"></h2>
+  <div class="sub" id="chemSub"></div>
+  <table>
+    <thead><tr><th>Chemical</th><th>CAS</th><th class="num">Wt %</th>
+      <th class="num">Content lb/gal</th><th></th></tr></thead>
+    <tbody id="chemRows"></tbody>
+  </table>
+  <div class="chemtotals" id="chemTotals"></div>
+  <div class="flex" style="margin-top:16px"><span class="spacer"></span>
+    <button class="ghost" onclick="chemDlg.close()">Close</button></div>
+</dialog>
+
+<dialog id="prodDlg">
+  <h2 id="prodDlgTitle">Add product</h2>
+  <form id="prodForm">
+    <div class="row2">
+      <div><label>Product number *</label><input name="number" required></div>
+      <div><label>Product name</label><input name="name"></div>
+    </div>
+    <div class="row2">
+      <div><label>Supplier</label><input name="supplier"></div>
+      <div><label>Category</label><select name="coating_type" id="ctSel"></select></div>
+    </div>
+    <h3>Physical / VOC data (from EDS)</h3>
+    <div class="row4">
+      <div><label>Density lb/gal *</label><input type="number" step="any" name="density" required></div>
+      <div><label>Specific gravity</label><input type="number" step="any" name="specific_gravity"></div>
+      <div><label>VOC lb/gal (regulatory) *</label><input type="number" step="any" name="voc_content" required></div>
+      <div><label>VOC as received lb/gal</label><input type="number" step="any" name="voc_received"></div>
+    </div>
+    <div class="row4">
+      <div><label>Volatiles wt %</label><input type="number" step="any" name="volatile_weight_pct"></div>
+      <div><label>Solids vol %</label><input type="number" step="any" name="solids_volume_pct"></div>
+      <div><label>Aggregate HAP lb/gal *</label><input type="number" step="any" name="eds_hap_content" required></div>
+      <div><label>As-applied VOC lb/gal</label><input type="number" step="any" name="as_applied_voc"></div>
+    </div>
+    <div class="row2">
+      <div><label>As-applied category</label><select name="as_applied_category">
+        <option value=""></option><option>Automotive Coating</option><option>non-Automotive Coating</option></select></div>
+      <div><label>Default part type</label><select name="default_part_type" id="dptSel"></select></div>
+    </div>
+    <h3>Chemical breakdown</h3>
+    <div class="hint">Weight % per chemical from the EDS / SDS Section 3. CAS with or without dashes. Per-CAS content is computed as density × wt%.</div>
+    <div id="chemEditor" style="margin-top:8px"></div>
+    <button type="button" class="ghost" id="addChem">+ Add chemical</button>
+    <h3>Tracked CAS overrides (advanced)</h3>
+    <div class="hint">Only fill these when the supplier EDS states a lbs/gal value that differs from density × wt%.
+      Filled values become authoritative for compliance reporting; blank = computed from the chemical rows.</div>
+    <div class="row4" style="margin-top:8px">
+      <div><label>Cumene lb/gal</label><input type="number" step="any" name="ov_cumene"></div>
+      <div><label>Dimethyl adipate</label><input type="number" step="any" name="ov_dma"></div>
+      <div><label>Dimethyl glutarate</label><input type="number" step="any" name="ov_dmg"></div>
+      <div><label>Dimethyl succinate</label><input type="number" step="any" name="ov_dms"></div>
+    </div>
+    <div class="row4" style="margin-top:8px">
+      <div><label>Ethylbenzene lb/gal</label><input type="number" step="any" name="ov_eb"></div>
+    </div>
+    <label style="margin-top:14px"><input type="checkbox" name="active" checked style="width:auto"> Active (available for logging)</label>
+    <label>Notes</label><input name="notes">
+    <div class="flex" style="margin-top:16px"><span class="spacer"></span>
+      <button type="button" class="ghost" onclick="prodDlg.close()">Cancel</button>
+      <button class="primary" style="margin:0" type="submit" id="prodSave">Save product</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+let META={}, PRODUCTS=[], voidTarget=null;
+const today=new Date().toISOString().slice(0,10);
+
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok){const e=await r.json().catch(()=>({detail:r.statusText}));throw new Error(e.detail)}return r.json()}
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('main>section').forEach(s=>s.style.display='none');
+  $('#tab-'+b.dataset.tab).style.display=b.dataset.tab==='log'?'grid':'block';
+  if(b.dataset.tab==='month')loadMonth();
+  if(b.dataset.tab==='products')renderProducts();
+});
+
+async function init(){
+  META=await api('/api/meta');
+  PRODUCTS=await api('/api/products');
+  $('#euSel').innerHTML=META.emission_units.map(e=>`<option>${e}</option>`).join('');
+  $('#ptSel').innerHTML=META.part_types.map(p=>`<option>${p}</option>`).join('');
+  $('#prodSel').innerHTML=PRODUCTS.filter(p=>p.active&&!p.historical_only)
+    .map(p=>`<option value="${p.number}">${p.number} — ${p.name} (${p.coating_type})</option>`).join('');
+  document.querySelector('[name=use_date]').value=today;
+  $('#monthPick').value=today.slice(0,7); $('#repMonth').value=today.slice(0,7);
+  loadGauges();
+  updatePreview();
+}
+
+function prodByNumber(n){return PRODUCTS.find(p=>p.number===n)}
+function updatePreview(){
+  const f=$('#logForm'), p=prodByNumber(f.product_number.value);
+  if(!p)return;
+  f.part_type.value=p.default_part_type;
+  const q=parseFloat(f.quantity.value);
+  if(q&&f.unit.value==='lbs'&&p.density)
+    $('#galPreview').textContent=`= ${(q/p.density).toFixed(4)} gal at ${p.density} lb/gal`;
+  else $('#galPreview').textContent='';
+}
+$('#prodSel').onchange=updatePreview;
+$('#logForm').quantity.oninput=updatePreview;
+$('#logForm').unit.onchange=updatePreview;
+
+$('#logForm').onsubmit=async e=>{
+  e.preventDefault();
+  const f=e.target, body=Object.fromEntries(new FormData(f));
+  body.quantity=+body.quantity; body.shift_hours=+body.shift_hours;
+  try{
+    const u=await api('/api/usage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    toast(`Saved — ${u.gallons.toFixed(4)} gal of ${u.product_number} on ${u.emission_unit}`);
+    f.quantity.value=''; updatePreview(); loadGauges();
+  }catch(err){toast('Error: '+err.message)}
+};
+
+async function loadGauges(){
+  const d=new Date();
+  const s=await api(`/api/summary?year=${d.getFullYear()}&month=${d.getMonth()+1}`);
+  const rows=[
+    ['VOC — Line 01','voc_eu1','tons'],['VOC — Line 02','voc_eu2','tons'],
+    ['VOC — Line 03','voc_eu3','tons'],['VOC — FG-Coating total','voc_fg','tons'],
+    ['Dibasic ester','dbe_tons','tons'],['Ethylbenzene','eb_tons','tons'],
+    ['Cumene','cumene_tons','tons'],['Aggregate HAPs','agghap_tons','tons']];
+  $('#gauges').innerHTML=rows.map(([lbl,k])=>{
+    const v=s.rolling[k],lim=s.limits[k],pct=Math.min(100,v/lim*100);
+    const cls=pct>=100?'over':pct>=80?'warn':'';
+    return `<div class="gauge ${cls}"><div class="lbl"><span>${lbl}</span>
+      <b>${v.toFixed(4)} / ${lim} TPY</b></div>
+      <div class="bar"><div class="fill" style="width:${pct}%"></div></div></div>`;
+  }).join('');
+  $('#gaugeNote').textContent=s.frozen
+    ?'Current month is inside the imported history window; values shown are the filed figures.'
+    :'Live: includes usage logged this month plus 11 prior months.';
+}
+
+async function loadMonth(){
+  const [y,m]=$('#monthPick').value.split('-');
+  const rows=await api(`/api/usage?year=${y}&month=${+m}&include_voided=${$('#showVoided').checked}`);
+  $('#usageTable tbody').innerHTML=rows.map(u=>`
+    <tr class="${u.voided?'voided':''}">
+      <td>${u.use_date}</td><td>${u.emission_unit.replace('EU-CoatingLine-','Line ')}</td>
+      <td>${u.product_number}</td>
+      <td><span class="chip ${u.coating_type}">${u.coating_type}</span></td>
+      <td>${u.part_type}</td>
+      <td class="num">${u.quantity.toFixed(2)} ${u.unit}</td>
+      <td class="num">${u.gallons.toFixed(4)}</td>
+      <td>${u.shift}</td>
+      <td>${u.voided?`<span class="muted">${u.void_reason||'voided'}</span>`
+        :`<button class="ghost" onclick="openVoid(${u.id})">Void</button>`}</td>
+    </tr>`).join('')||'<tr><td colspan="9" class="muted">No entries this month.</td></tr>';
+}
+$('#monthPick').onchange=loadMonth; $('#showVoided').onchange=loadMonth;
+
+function openVoid(id){voidTarget=id;$('#voidReason').value='';voidDlg.showModal()}
+$('#voidGo').onclick=async()=>{
+  try{
+    await api(`/api/usage/${voidTarget}/void`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reason:$('#voidReason').value||'voided'})});
+    voidDlg.close(); toast('Entry voided'); loadMonth(); loadGauges();
+  }catch(err){toast('Error: '+err.message)}
+};
+
+function renderProducts(){
+  $('#prodTable tbody').innerHTML=PRODUCTS.filter(p=>!p.historical_only).map(p=>`
+    <tr><td style="font-family:var(--mono);font-size:12.5px">${p.number}</td><td>${p.name}</td>
+      <td><span class="chip ${p.coating_type}">${p.coating_type}</span></td>
+      <td class="num">${p.density.toFixed(4)}</td>
+      <td class="num">${p.voc_content.toFixed(4)}</td>
+      <td class="num">${p.eds_hap_content.toFixed(4)}</td>
+      <td class="num">${p.chemicals.length}</td>
+      <td><button class="ghost" onclick="showChems('${p.number}')">Chems</button>
+          <button class="ghost" onclick="openProd('${p.number}')">Edit</button></td>
+    </tr>`).join('');
+}
+function fmtCAS(cas){
+  if(!/^\d{5,10}$/.test(cas)) return cas;              // 'Proprietary' etc.
+  return cas.slice(0,-3)+'-'+cas.slice(-3,-1)+'-'+cas.slice(-1);
+}
+function showChems(num){
+  const p=prodByNumber(num);
+  $('#chemTitle').textContent=`${p.number} — ${p.name||'(no name)'}`;
+  $('#chemSub').textContent=`${p.coating_type} · ${p.supplier||'supplier n/a'} · density ${p.density.toFixed(4)} lb/gal`;
+  const rows=[...p.chemicals].sort((a,b)=>b.wt_fraction-a.wt_fraction);
+  $('#chemRows').innerHTML=rows.map(ch=>`
+    <tr><td>${ch.name}</td>
+      <td style="font-family:var(--mono);font-size:12px">${fmtCAS(ch.cas)}</td>
+      <td class="num">${(ch.wt_fraction*100).toFixed(2)}%</td>
+      <td class="num">${(ch.wt_fraction*p.density).toFixed(4)}</td>
+      <td>${ch.is_hap?'<span class="tag hap">HAP</span>':''}
+          ${ch.is_solid?'<span class="tag solid">SOLID</span>':''}</td>
+    </tr>`).join('')||'<tr><td colspan="5" class="muted">No chemical breakdown on file.</td></tr>';
+  const d=p.derived;
+  $('#chemTotals').innerHTML=`
+    <div>VOC<b>${p.voc_content.toFixed(4)}</b></div>
+    <div>Aggregate HAP<b>${p.eds_hap_content.toFixed(4)}</b></div>
+    <div>Dibasic ester<b>${d.dibasic_ester.toFixed(4)}</b></div>
+    <div>Ethylbenzene<b>${d.ethylbenzene.toFixed(4)}</b></div>
+    <div>Cumene<b>${d.cumene.toFixed(4)}</b></div>
+    <div>Isobutyl acetate<b>${d.isobutyl_acetate.toFixed(4)}</b></div>`;
+  chemDlg.showModal();
+}
+let editingId=null;
+function chemRowHtml(ch={cas:'',name:'',wt_fraction:0,is_hap:false,is_solid:false}){
+  return `<div class="chemrow">
+    <input placeholder="Chemical name" class="c-name" value="${ch.name||''}">
+    <input placeholder="CAS" class="c-cas" value="${ch.cas||''}">
+    <input type="number" step="any" placeholder="wt %" class="c-wt" value="${ch.wt_fraction?+(ch.wt_fraction*100).toFixed(4):''}">
+    <span class="cklbl"><input type="checkbox" class="c-hap" ${ch.is_hap?'checked':''}>HAP</span>
+    <span class="cklbl"><input type="checkbox" class="c-solid" ${ch.is_solid?'checked':''}>Solid</span>
+    <button type="button" class="delchem" title="Remove" onclick="this.parentElement.remove()">×</button>
+  </div>`;
+}
+$('#addChem').onclick=()=>$('#chemEditor').insertAdjacentHTML('beforeend',chemRowHtml());
+function openProd(num){
+  const f=$('#prodForm'); f.reset(); editingId=null;
+  $('#ctSel').innerHTML=META.coating_types.map(t=>`<option>${t}</option>`).join('');
+  $('#dptSel').innerHTML=META.part_types.map(t=>`<option>${t}</option>`).join('');
+  $('#chemEditor').innerHTML='';
+  if(num){
+    const p=prodByNumber(num); editingId=p.id;
+    $('#prodDlgTitle').textContent=`Edit ${p.number}`;
+    for(const k of ['number','name','supplier','coating_type','density','specific_gravity','voc_content',
+      'voc_received','volatile_weight_pct','solids_volume_pct','eds_hap_content','as_applied_voc',
+      'as_applied_category','default_part_type','notes'])
+      if(f[k]!==undefined&&p[k]!==null&&p[k]!==undefined) f[k].value=p[k];
+    f.active.checked=p.active;
+    const ov=p.content_override||{};
+    for(const [inp,key] of [['ov_cumene','cumene'],['ov_dma','dma'],['ov_dmg','dmg'],['ov_dms','dms'],['ov_eb','eb']])
+      if(ov[key]!==undefined&&ov[key]!==null) f[inp].value=ov[key];
+    $('#chemEditor').innerHTML=p.chemicals.map(chemRowHtml).join('');
+  }else{
+    $('#prodDlgTitle').textContent='Add product';
+    $('#chemEditor').innerHTML=chemRowHtml();
+  }
+  prodDlg.showModal();
+}
+$('#newProd').onclick=()=>openProd(null);
+$('#prodForm').onsubmit=async e=>{
+  e.preventDefault();
+  const f=e.target;
+  const chems=[...document.querySelectorAll('#chemEditor .chemrow')].map(r=>({
+    name:r.querySelector('.c-name').value.trim(),
+    cas:r.querySelector('.c-cas').value.trim(),
+    wt_fraction:(parseFloat(r.querySelector('.c-wt').value)||0)/100,
+    is_hap:r.querySelector('.c-hap').checked,
+    is_solid:r.querySelector('.c-solid').checked,
+  })).filter(ch=>ch.name||ch.cas);
+  for(const ch of chems){
+    if(ch.wt_fraction<0||ch.wt_fraction>1){toast(`Check wt % for ${ch.name||ch.cas} — must be 0–100`);return;}
+  }
+  const num=v=>v===''?0:+v;
+  const ov={};
+  for(const [inp,key] of [['ov_cumene','cumene'],['ov_dma','dma'],['ov_dmg','dmg'],['ov_dms','dms'],['ov_eb','eb']])
+    if(f[inp].value!=='') ov[key]=+f[inp].value;
+  const body={
+    number:f.number.value.trim(), name:f.name.value.trim(), supplier:f.supplier.value.trim(),
+    coating_type:f.coating_type.value, density:num(f.density.value),
+    specific_gravity:num(f.specific_gravity.value), voc_content:num(f.voc_content.value),
+    voc_received:num(f.voc_received.value), volatile_weight_pct:num(f.volatile_weight_pct.value),
+    solids_volume_pct:num(f.solids_volume_pct.value), eds_hap_content:num(f.eds_hap_content.value),
+    as_applied_voc:f.as_applied_voc.value===''?null:+f.as_applied_voc.value,
+    as_applied_category:f.as_applied_category.value, default_part_type:f.default_part_type.value,
+    active:f.active.checked, notes:f.notes.value,
+    content_override:Object.keys(ov).length?ov:null, chemicals:chems};
+  try{
+    const url=editingId?`/api/products/${editingId}`:'/api/products';
+    await api(url,{method:editingId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    prodDlg.close();
+    PRODUCTS=await api('/api/products');
+    $('#prodSel').innerHTML=PRODUCTS.filter(p=>p.active&&!p.historical_only)
+      .map(p=>`<option value="${p.number}">${p.number} — ${p.name} (${p.coating_type})</option>`).join('');
+    renderProducts(); toast(editingId?'Product updated':'Product added');
+  }catch(err){toast('Error: '+err.message)}
+};
+
+$('#genRep').onclick=()=>{
+  const [y,m]=$('#repMonth').value.split('-');
+  window.location=`/api/report/aggregate?year=${y}&month=${+m}`;
+};
+
+init();
+</script>
+</body>
+</html>
