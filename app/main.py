@@ -31,12 +31,33 @@ def _migrate():
         kw = "" if engine.dialect.name == "mssql" else "COLUMN "
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE products ADD {kw}mix {coltype}"))
+    ucols = [col["name"] for col in insp.get_columns("usage_logs")]
+    if "auto_source_id" not in ucols:
+        kw = "" if engine.dialect.name == "mssql" else "COLUMN "
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE usage_logs ADD {kw}auto_source_id INTEGER"))
+
+
+def _migrate_legacy_mixes():
+    """One-time: products that stored a mix in the legacy column get an
+    initial MixVersion so history starts cleanly."""
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        for p in db.query(models.Product).filter(models.Product.mix.isnot(None)):
+            if not p.mix_versions and p.mix:
+                db.add(models.MixVersion(product_id=p.id, components=p.mix,
+                                         created_by="migration"))
+        db.commit()
+    finally:
+        db.close()
 
 
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
     _migrate()
+    _migrate_legacy_mixes()
     from .database import SessionLocal
     db = SessionLocal()
     try:
@@ -93,7 +114,8 @@ def product_out(p: models.Product, by_number=None):
         "as_applied_voc": p.as_applied_voc, "as_applied_category": p.as_applied_category,
         "default_part_type": p.default_part_type, "active": p.active,
         "historical_only": p.historical_only, "notes": p.notes,
-        "content_override": p.content_override, "mix": p.mix,
+        "content_override": p.content_override,
+        "mix": (p.mix_at().components if p.mix_at() else None),
         "as_applied_effective": eff,
         "chemicals": [{"cas": c.cas, "name": c.name, "wt_fraction": c.wt_fraction,
                        "is_hap": c.is_hap, "is_solid": c.is_solid} for c in p.chemicals],
@@ -116,10 +138,13 @@ def list_products(include_historical: bool = False, db: Session = Depends(get_db
 
 
 @app.post("/api/products")
-def create_product(body: ProductIn, db: Session = Depends(get_db)):
+def create_product(body: ProductIn, request: Request, db: Session = Depends(get_db)):
     if db.query(models.Product).filter_by(number=body.number).first():
         raise HTTPException(409, f"Product {body.number} already exists")
-    p = models.Product(**body.dict(exclude={"chemicals"}))
+    p = models.Product(**body.dict(exclude={"chemicals", "mix"}))
+    if body.mix:
+        p.mix_versions.append(models.MixVersion(components=body.mix,
+                                                created_by=current_user(request)))
     for c in body.chemicals:
         p.chemicals.append(models.ProductChemical(
             cas=c.cas.replace("-", ""), name=c.name, wt_fraction=c.wt_fraction,
@@ -129,12 +154,21 @@ def create_product(body: ProductIn, db: Session = Depends(get_db)):
 
 
 @app.put("/api/products/{pid}")
-def update_product(pid: int, body: ProductIn, db: Session = Depends(get_db)):
+def update_product(pid: int, body: ProductIn, request: Request, db: Session = Depends(get_db)):
     p = db.get(models.Product, pid)
     if not p:
         raise HTTPException(404, "Not found")
-    for k, v in body.dict(exclude={"chemicals"}).items():
+    for k, v in body.dict(exclude={"chemicals", "mix"}).items():
         setattr(p, k, v)
+    cur = p.mix_at()
+    cur_comps = cur.components if cur else None
+    new_comps = body.mix or None
+    def _norm(m):
+        return sorted([(x.get("label"), str(x.get("product_number")), float(x.get("ratio", 0)))
+                       for x in (m or [])])
+    if _norm(cur_comps) != _norm(new_comps):
+        db.add(models.MixVersion(product_id=p.id, components=new_comps or [],
+                                 created_by=current_user(request)))
     p.chemicals.clear()
     for c in body.chemicals:
         p.chemicals.append(models.ProductChemical(
@@ -142,6 +176,47 @@ def update_product(pid: int, body: ProductIn, db: Session = Depends(get_db)):
             is_hap=c.is_hap, is_solid=c.is_solid))
     db.commit()
     return product_out(p, {x.number: x for x in db.query(models.Product).all()})
+
+
+@app.get("/api/products/{pid}/mix_history")
+def mix_history(pid: int, db: Session = Depends(get_db)):
+    """As Applied Record: every mix version with implemented date, last-used
+    date (from actual usage logs), components, and as-applied VOC at current
+    component VOC values."""
+    p = db.get(models.Product, pid)
+    if not p:
+        raise HTTPException(404, "Not found")
+    by_number = {x.number: x for x in db.query(models.Product).all()}
+    out = []
+    versions = list(p.mix_versions)
+    for i, v in enumerate(versions):
+        start = v.effective_from.date()
+        end = versions[i + 1].effective_from.date() if i + 1 < len(versions) else None
+        q = (db.query(models.UsageLog)
+               .filter(models.UsageLog.product_id == p.id,
+                       models.UsageLog.voided == False,  # noqa: E712
+                       models.UsageLog.use_date >= start))
+        if end:
+            q = q.filter(models.UsageLog.use_date < end)
+        last = q.order_by(models.UsageLog.use_date.desc()).first()
+        comps = []
+        total = weighted = 0.0
+        for cmp_ in (v.components or []):
+            cp = by_number.get(str(cmp_.get("product_number", "")))
+            r = float(cmp_.get("ratio") or 0)
+            comps.append({"label": cmp_.get("label"), "product_number": cmp_.get("product_number"),
+                          "name": cp.name if cp else "?", "ratio": r,
+                          "voc": cp.voc_content if cp else None})
+            if cp and r > 0:
+                total += r; weighted += r * (cp.voc_content or 0)
+        out.append({"effective_from": v.effective_from.isoformat(),
+                    "created_by": v.created_by,
+                    "retired": end.isoformat() if end else None,
+                    "last_used": last.use_date.isoformat() if last else None,
+                    "components": comps,
+                    "as_applied_voc": (weighted / total) if total > 0 else None,
+                    "current": end is None})
+    return out
 
 
 # ---------- Usage logs ----------
@@ -166,6 +241,7 @@ def usage_out(u: models.UsageLog):
             "quantity": u.quantity, "unit": u.unit, "gallons": u.gallons,
             "part_type": u.part_type, "shift": u.shift, "shift_hours": u.shift_hours,
             "employee": u.employee, "notes": u.notes, "voided": u.voided,
+            "auto": u.auto_source_id is not None,
             "void_reason": u.void_reason,
             "created_by": u.created_by, "updated_by": u.updated_by}
 
@@ -195,8 +271,52 @@ def log_usage(body: UsageIn, request: Request, db: Session = Depends(get_db)):
         shift=body.shift, shift_hours=body.shift_hours,
         employee=body.employee, notes=body.notes,
         created_by=current_user(request), updated_by=current_user(request))
-    db.add(u); db.commit()
-    return usage_out(u)
+    db.add(u); db.flush()
+    autos = _auto_solvent_entries(db, u, request)
+    db.commit()
+    resp = usage_out(u)
+    resp["auto_entries"] = [usage_out(a) for a in autos]
+    return resp
+
+
+def _auto_solvent_entries(db: Session, u: models.UsageLog, request: Request):
+    """Reduction solvent from the as-applied mix of the logged product,
+    using the mix version in effect on the use date. Only Solvent-category
+    components are auto-logged; hardener and purge solvent remain operator
+    entries. gallons = parent gallons x (component ratio / parent ratio)."""
+    v = u.product.mix_at(u.use_date)
+    if not v or not v.components:
+        return []
+    comps = v.components
+    self_ratio = None
+    for cmp_ in comps:
+        if str(cmp_.get("product_number")) == u.product.number:
+            self_ratio = float(cmp_.get("ratio") or 0)
+    if not self_ratio:
+        return []
+    made = []
+    for cmp_ in comps:
+        num = str(cmp_.get("product_number"))
+        if num == u.product.number:
+            continue
+        comp = db.query(models.Product).filter_by(number=num).first()
+        if not comp or comp.coating_type != "Solvent":
+            continue
+        r = float(cmp_.get("ratio") or 0)
+        if r <= 0:
+            continue
+        g = u.gallons * r / self_ratio
+        child = models.UsageLog(
+            use_date=u.use_date, emission_unit=u.emission_unit, product_id=comp.id,
+            quantity=g, unit="gal", gallons=g,
+            part_type=u.part_type, shift=u.shift, shift_hours=u.shift_hours,
+            employee=u.employee,
+            notes=f"auto: reduction solvent for {u.product.number} @ {self_ratio:g}:{r:g}",
+            auto_source_id=u.id,
+            created_by=current_user(request), updated_by=current_user(request))
+        db.add(child)
+        made.append(child)
+    return made
 
 
 @app.get("/api/usage")
@@ -232,6 +352,19 @@ def edit_usage(uid: int, body: UsageEdit, request: Request, db: Session = Depend
         setattr(u, k, v)
     if "quantity" in data or "unit" in data:
         u.gallons = _to_gallons(u.quantity, u.unit, u.product)
+    for child in db.query(models.UsageLog).filter_by(auto_source_id=u.id, voided=False):
+        v = u.product.mix_at(u.use_date)
+        self_r = comp_r = None
+        for cmp_ in (v.components if v else []):
+            if str(cmp_.get("product_number")) == u.product.number:
+                self_r = float(cmp_.get("ratio") or 0)
+            if str(cmp_.get("product_number")) == child.product.number:
+                comp_r = float(cmp_.get("ratio") or 0)
+        if self_r and comp_r:
+            child.gallons = child.quantity = u.gallons * comp_r / self_r
+        child.use_date, child.emission_unit = u.use_date, u.emission_unit
+        child.shift, child.shift_hours, child.part_type = u.shift, u.shift_hours, u.part_type
+        child.updated_by = current_user(request)
     u.updated_by = current_user(request)
     u.updated_at = datetime.utcnow()
     db.commit()
@@ -250,6 +383,10 @@ def void_usage(uid: int, body: VoidIn, request: Request, db: Session = Depends(g
     u.voided = True
     u.void_reason = body.reason
     u.updated_by = current_user(request)
+    for child in db.query(models.UsageLog).filter_by(auto_source_id=u.id, voided=False):
+        child.voided = True
+        child.void_reason = f"auto-voided with parent entry #{u.id}: {body.reason}"
+        child.updated_by = current_user(request)
     db.commit()
     return usage_out(u)
 

@@ -45,9 +45,27 @@ class Product(Base):
     historical_only = Column(Boolean, default=False)            # kept for Material Content Report continuity
     content_override = Column(JSON, nullable=True)              # legacy per-CAS lbs/gal for historical-only products
     notes = Column(Text, default="")
-    mix = Column(JSON, nullable=True)   # as-applied mix: [{"label":"A","product_number":"..","ratio":8.0},..]
+    mix = Column(JSON, nullable=True)   # legacy single-mix field; superseded by MixVersion
     chemicals = relationship("ProductChemical", back_populates="product",
                              cascade="all, delete-orphan")
+    mix_versions = relationship("MixVersion", back_populates="product",
+                                order_by="MixVersion.effective_from",
+                                cascade="all, delete-orphan")
+
+    def mix_at(self, on_date=None):
+        """Components in effect on a given date (or now). Versions apply
+        forward-only: an entry uses the newest version whose effective_from
+        is on/before the entry's use date."""
+        if on_date is None:
+            on_date = datetime.utcnow().date()
+        if isinstance(on_date, datetime):
+            on_date = on_date.date()
+        best = None
+        for v in self.mix_versions:
+            eff = v.effective_from.date() if isinstance(v.effective_from, datetime) else v.effective_from
+            if eff <= on_date:
+                best = v
+        return best
 
     def cas_content(self):
         """Per-CAS content lbs/gal.
@@ -75,14 +93,29 @@ class Product(Base):
         return out
 
 
+class MixVersion(Base):
+    """Dated as-applied mix definition. Saving a changed mix creates a new
+    version; prior versions are never modified, so historical entries keep the
+    ratios that were in effect when they were logged."""
+    __tablename__ = "mix_versions"
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    effective_from = Column(DateTime, default=datetime.utcnow, nullable=False)
+    components = Column(JSON, nullable=False)   # [{"label":"A","product_number":"..","ratio":8.0},..]
+    created_by = Column(String(128), default="")
+    product = relationship("Product", back_populates="mix_versions")
+
+
 def as_applied_voc_effective(product, by_number):
     """Volume-weighted as-applied VOC from the mix ratio, e.g. A:B:C = 8:2:1
     -> (8*VOCa + 2*VOCb + 1*VOCc) / 11. Falls back to the manually entered
     as_applied_voc when no mix is defined. Always computed from the components'
     CURRENT VOC values, so supplier revisions flow through automatically."""
-    if product.mix:
+    v = product.mix_at()
+    comps = v.components if v else None
+    if comps:
         total = weighted = 0.0
-        for comp in product.mix:
+        for comp in comps:
             p = by_number.get(str(comp.get("product_number", "")).strip())
             try:
                 r = float(comp.get("ratio") or 0)
@@ -123,6 +156,7 @@ class UsageLog(Base):
     shift_hours = Column(Float, default=8.5)
     employee = Column(String(128), default="")
     notes = Column(Text, default="")
+    auto_source_id = Column(Integer, ForeignKey("usage_logs.id"), nullable=True, index=True)
     voided = Column(Boolean, default=False, index=True)
     void_reason = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)

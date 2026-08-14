@@ -189,6 +189,15 @@
     <button class="ghost" onclick="chemDlg.close()">Close</button></div>
 </dialog>
 
+<dialog id="mixHistDlg" style="max-width:720px">
+  <h2 style="font-size:15px" id="mixHistTitle"></h2>
+  <p class="muted" style="margin-bottom:10px">As Applied Record — every mix version, newest first.
+    Historical entries always keep the version in effect on their use date.</p>
+  <div id="mixHistBody"></div>
+  <div class="flex" style="margin-top:14px"><span class="spacer"></span>
+    <button class="ghost" onclick="mixHistDlg.close()">Close</button></div>
+</dialog>
+
 <dialog id="prodDlg">
   <h2 id="prodDlgTitle">Add product</h2>
   <form id="prodForm">
@@ -226,7 +235,9 @@
     <div class="hint">For basecoats, clearcoats, primers, and adhesion promoters mixed before spraying.
       Pick each component and its ratio (e.g. A:B:C = 8:2:1); as-applied VOC is volume-weighted from each
       component's regulatory VOC and updates automatically if a component's EDS is revised. Leave blank
-      for materials used as received.</div>
+      for materials used as received. <b>Changing the mix creates a new dated version applying to future
+      entries only</b> — entries already logged keep the ratios in effect when they were made. When this
+      mix includes a Solvent component, logging this product also auto-logs the reduction solvent.</div>
     <div style="margin-top:8px">
       <div class="mixrow"><span class="mlbl">A</span><select class="m-prod" data-l="A"></select><input type="number" step="any" min="0" placeholder="ratio" class="m-ratio" data-l="A"></div>
       <div class="mixrow"><span class="mlbl">B</span><select class="m-prod" data-l="B"></select><input type="number" step="any" min="0" placeholder="ratio" class="m-ratio" data-l="B"></div>
@@ -304,7 +315,10 @@ $('#logForm').onsubmit=async e=>{
   body.quantity=+body.quantity; body.shift_hours=+body.shift_hours;
   try{
     const u=await api('/api/usage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    toast(`Saved — ${u.gallons.toFixed(4)} gal of ${u.product_number} on ${u.emission_unit}`);
+    let msg=`Saved — ${u.gallons.toFixed(4)} gal of ${u.product_number} on ${u.emission_unit}`;
+    if(u.auto_entries&&u.auto_entries.length)
+      msg+=` · auto-logged ${u.auto_entries.map(a=>a.gallons.toFixed(4)+' gal '+a.product_number).join(', ')} (reduction solvent)`;
+    toast(msg);
     f.quantity.value=''; updatePreview(); loadGauges();
   }catch(err){toast('Error: '+err.message)}
 };
@@ -335,7 +349,7 @@ async function loadMonth(){
   $('#usageTable tbody').innerHTML=rows.map(u=>`
     <tr class="${u.voided?'voided':''}">
       <td>${u.use_date}</td><td>${u.emission_unit.replace('EU-CoatingLine-','Line ')}</td>
-      <td>${u.product_number}</td>
+      <td>${u.product_number}${u.auto?' <span class="tag solid" title="auto-logged reduction solvent">AUTO</span>':''}</td>
       <td><span class="chip ${u.coating_type}">${u.coating_type}</span></td>
       <td>${u.part_type}</td>
       <td class="num">${u.quantity.toFixed(2)} ${u.unit}</td>
@@ -366,7 +380,8 @@ function renderProducts(){
       <td class="num">${p.eds_hap_content.toFixed(4)}</td>
       <td class="num">${p.chemicals.length}</td>
       <td><button class="ghost" onclick="showChems('${p.number}')">Chems</button>
-          <button class="ghost" onclick="openProd('${p.number}')">Edit</button></td>
+          <button class="ghost" onclick="openProd('${p.number}')">Edit</button>
+          ${p.mix?`<button class="ghost" onclick="showMixHistory('${p.number}')">Mix record</button>`:''}</td>
     </tr>`).join('');
 }
 function fmtCAS(cas){
@@ -461,6 +476,26 @@ function openProd(num){
     $('#chemEditor').innerHTML=chemRowHtml();
   }
   prodDlg.showModal();
+}
+async function showMixHistory(num){
+  const p=prodByNumber(num);
+  $('#mixHistTitle').textContent=`${p.number} — ${p.name}`;
+  const hist=await api(`/api/products/${p.id}/mix_history`);
+  $('#mixHistBody').innerHTML=[...hist].reverse().map(v=>`
+    <div class="card" style="margin-bottom:10px;padding:12px">
+      <div class="flex" style="font-size:12.5px">
+        <b>${v.current?'CURRENT':'Retired'}</b>
+        <span class="muted">implemented ${v.effective_from.slice(0,16).replace('T',' ')}</span>
+        ${v.retired?`<span class="muted">retired ${v.retired}</span>`:''}
+        <span class="muted">last used: ${v.last_used||'never'}</span>
+        <span class="spacer"></span>
+        <b style="font-family:var(--mono)">${v.as_applied_voc!==null?v.as_applied_voc.toFixed(4)+' lb/gal':'—'}</b>
+      </div>
+      <table style="margin-top:8px"><thead><tr><th></th><th>Component</th><th class="num">Ratio</th><th class="num">VOC lb/gal</th></tr></thead>
+      <tbody>${v.components.map(cp=>`<tr><td>${cp.label}</td><td>${cp.product_number} — ${cp.name}</td>
+        <td class="num">${cp.ratio}</td><td class="num">${cp.voc!==null?cp.voc.toFixed(4):'?'}</td></tr>`).join('')}</tbody></table>
+    </div>`).join('')||'<p class="muted">No mix defined for this product.</p>';
+  mixHistDlg.showModal();
 }
 $('#newProd').onclick=()=>openProd(null);
 $('#prodForm').onsubmit=async e=>{
